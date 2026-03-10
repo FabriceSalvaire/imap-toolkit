@@ -1,0 +1,12 @@
+[project]
+name = "imap-tool"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "imapclient>=3.1.0",
+    "pyicu>=2.16.1",
+    "pyyaml>=6.0.3",
+    "rich>=14.3.3",
+]
