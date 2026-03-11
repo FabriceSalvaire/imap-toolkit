@@ -82,10 +82,16 @@ class Folder:
 
     ##############################################
 
-    def __init__(self, name: str, parent: 'Folder' | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        parent: 'Folder' | None = None,
+        client: 'ImapClient' | None = None,
+    ) -> None:
         self._name = name
         self._parent: Folder | None = parent
         self._childs: dict[str, Folder] = {}
+        self._client = client
 
     ##############################################
 
@@ -144,6 +150,15 @@ class Folder:
         for name, child in sorted(self._childs.items(), key=lambda t: collator.getSortKey(t[0])):
             child.depth_first_search(callback, callback_data, level + 1)
 
+    ##############################################
+
+    def select(self) -> dict:
+        return self._client.select_folder(self.full_name)
+
+    @property
+    def size(self) -> int:
+        return self._client.folder_size(self.full_name)
+
 ####################################################################################################
 
 class ImapClient:
@@ -191,8 +206,19 @@ class ImapClient:
 
     ##############################################
 
-    def select_folder(self, folder: Folder) -> dict:
+    def select_folder(self, folder: Folder | str) -> dict:
         return self._client.select_folder(str(folder), readonly=True)
+
+    ##############################################
+
+    # def folder_ids(self, folder: Folder | str) -> list[int]:
+    #     self.select_folder(folder)
+    def folder_ids(self) -> list[int]:
+        return self._client.search('ALL')
+
+    def fetch(self, email_id: int) -> str:
+        _ = self._client.fetch(email_id, ['RFC822'])
+        return _[email_id][b'RFC822']
 
     ##############################################
 
@@ -206,8 +232,8 @@ class ImapClient:
 
     ##############################################
 
-    def folder_size(self, folder: Folder) -> int:
-        _ = client._client.folder_status(folder.full_name, what=('SIZE'))
+    def folder_size(self, folder: Folder | str) -> int:
+        _ = self._client.folder_status(str(folder), what=('SIZE'))
         return _[b'SIZE']
 
 ####################################################################################################
@@ -238,6 +264,7 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
         callback_data.size2 += size
         _ = byte_humanize(size)
         console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
+        console.print(f'  "{folder.full_name}"')
     except Exception as e:
         console.print(f'{line} [red]!!!')
     # console.print(f'"{folder}"')
@@ -313,12 +340,13 @@ if args.folders:
     console.print(f"  #folders {callback_data.number_of_folders}")
     console.print(f"{' '*40} {callback_data.number_of_mails:>8_} {size:>8}")
 
-# email_ids = server.search('ALL')
-# console.print(email_ids)
+folder = 'INBOX/Compte Site Web'
+client.select_folder(folder)
+email_ids = client.folder_ids()
+email_id = email_ids[0]
+_ = client.fetch(email_id)
+console.print(_)
 
-# email_id = email_ids[0]
-# _ = server.fetch(email_id, ['RFC822'])
-# console.print(_)
 # message_data = _[email_id]
 # email_message = email.message_from_bytes(message_data[b"RFC822"])
 # console.print(email_message.get('From'))
