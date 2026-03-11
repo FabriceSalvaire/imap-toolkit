@@ -9,12 +9,13 @@
 ####################################################################################################
 
 from dataclasses import dataclass
-from icu import Collator, Locale  # To sort correctly latin and unicode
 from pathlib import Path
 from typing import Self, Callable
 import argparse
 import email
 import logging
+
+from icu import Collator, Locale  # To sort correctly latin and unicode
 
 import imapclient
 
@@ -41,7 +42,7 @@ def _humanize(size: int, binary: bool = False, number_of_digits: int = 1) -> str
     #     return None
     BASE = 1024 if binary else 1000
     I_PREFIX = 'i' if binary else ''
-    PREFIXES = ('', 'k', 'M', 'G', 'T', 'P')
+    PREFIXES = (' ', 'k', 'M', 'G', 'T', 'P')
     DOT_ZERO = '.' + '0'*number_of_digits
     remain: float = size
     for prefix in PREFIXES:
@@ -51,7 +52,7 @@ def _humanize(size: int, binary: bool = False, number_of_digits: int = 1) -> str
             # remove .000
             if _.endswith(DOT_ZERO):
                 _ = _[:-len(DOT_ZERO)]
-            return f'{_}{prefix}{I_PREFIX}B'
+            return f'{_} {prefix}{I_PREFIX}B'
         remain = next_remain
 
 def byte_humanize(size: int) -> str:
@@ -193,6 +194,54 @@ class ImapClient:
     def select_folder(self, folder: Folder) -> dict:
         return self._client.select_folder(str(folder), readonly=True)
 
+    ##############################################
+
+    @property
+    def size(self) -> int:
+        for quota in client.quota:
+            match quota.resource:
+                case 'STORAGE':
+                    return quota.usage*1024
+        raise NotImplementedError
+
+    ##############################################
+
+    def folder_size(self, folder: Folder) -> int:
+        _ = client._client.folder_status(folder.full_name, what=('SIZE'))
+        return _[b'SIZE']
+
+####################################################################################################
+
+@dataclass
+class CallbackData:
+    number_of_mails: int = 0
+    number_of_folders: int = 0
+    size: int = 0
+    size2: int = 0
+
+def folder_callback(folder: Folder, callback_data, level: int) -> None:
+    indent = ' '*level*4
+    line = f'{indent}"{folder.name}"'
+    line = f'{line:<40}'
+    try:
+        callback_data.number_of_folders += 1
+        number_of_mails = client.select_folder(folder)[b'EXISTS']
+        callback_data.number_of_mails += number_of_mails
+        size = client.folder_size(folder)
+        percent = 100 * size / callback_data.size
+        if percent < 1:
+            percent_str = '  <  '
+        elif percent > 5:
+            percent_str = f'{round(percent):>3}  '
+        else:
+            percent_str = f'{percent:5.1f}'
+        callback_data.size2 += size
+        _ = byte_humanize(size)
+        console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
+    except Exception as e:
+        console.print(f'{line} [red]!!!')
+    # console.print(f'"{folder}"')
+
 ####################################################################################################
 
 parser = argparse.ArgumentParser(
@@ -208,6 +257,18 @@ parser.add_argument(
     '--imap',
     required=True,
 )
+parser.add_argument(
+    '--capabilities',
+    action='store_true',
+)
+parser.add_argument(
+    '--quota',
+    action='store_true',
+)
+parser.add_argument(
+    '--folders',
+    action='store_true',
+)
 args = parser.parse_args()
 
 console = Console()
@@ -219,49 +280,38 @@ imap_config = ImapClientConfig.from_yaml(config_path, args.imap)
 client = ImapClient(imap_config)
 console.print(f"Logged to [green]{imap_config.server}")
 
-# console.print("Server Capabilities:")
-# for _ in client.capabilities:
-#     console.print(f"  '{_}'")
+if args.capabilities:
+    console.print("Server Capabilities:")
+    for _ in client.capabilities:
+        console.print(f"  '{_}'")
 
-console.print()
-console.print("[yellow]Quota:")
-for quota in client.quota:
-    # console.print(quota)
-    percent = round(100 * quota.usage / quota.limit)
-    match quota.resource:
-        case 'STORAGE':
-            usage = byte_humanize(quota.usage*1024)
-            limit = byte_humanize(quota.limit*1024)
-            title = 'Storage'
-            console.print(f"  {title:<20} {usage} / {limit} @{percent}%")
-        case 'MESSAGE':
-            title = 'Number of Messages'
-            console.print(f"  {title:<20} {quota.usage:_} / {quota.limit:_} @{percent}%")
+if args.quota:
+    console.print()
+    console.print("[yellow]Quota:")
+    for quota in client.quota:
+        # console.print(quota)
+        percent = round(100 * quota.usage / quota.limit)
+        match quota.resource:
+            case 'STORAGE':
+                usage = byte_humanize(quota.usage*1024)
+                limit = byte_humanize(quota.limit*1024)
+                title = 'Storage'
+                console.print(f"  {title:<20} {usage} / {limit} @{percent} %")
+            case 'MESSAGE':
+                title = 'Number of Messages'
+                console.print(f"  {title:<20} {quota.usage:_} / {quota.limit:_} @{percent} %")
 
-client.build_folder_tree()
-
-@dataclass
-class CallbackData:
-    number_of_mails: int = 0
-    number_of_folder: int = 0
-
-def folder_callback(folder: Folder, callback_data, level: int) -> None:
-    indent = ' '*level*4
-    line = f'{indent}"{folder.name}"'
-    line = f'{line:<40}'
-    try:
-        number_of_mails = client.select_folder(folder)[b'EXISTS']
-        callback_data.number_of_mails += number_of_mails
-        console.print(f'{line} {number_of_mails:>8_}')
-    except:
-        console.print(f'{line} [red]!!!')
-    # console.print(f'"{folder}"')
-
-console.print()
-console.print("[yellow]Folders:")
-callback_data= CallbackData()
-client.inbox.depth_first_search(folder_callback, callback_data)
-console.print(f"{' '*40} {callback_data.number_of_mails:>8_}")
+if args.folders:
+    client.build_folder_tree()
+    console.print()
+    console.print("[yellow]Folders:")
+    size1 = client.size
+    # print(f"Size {byte_humanize(size1)}")
+    callback_data= CallbackData(size=size1)
+    client.inbox.depth_first_search(folder_callback, callback_data)
+    size = byte_humanize(callback_data.size2)
+    console.print(f"  #folders {callback_data.number_of_folders}")
+    console.print(f"{' '*40} {callback_data.number_of_mails:>8_} {size:>8}")
 
 # email_ids = server.search('ALL')
 # console.print(email_ids)
