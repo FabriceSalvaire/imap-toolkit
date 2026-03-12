@@ -215,6 +215,14 @@ class ImapClient:
         if self._root is not None:
             return
         root = Folder('', client=self)
+        # ic = self._client
+        # cmd = 'LIST'
+        # directory = ic._normalise_folder('')
+        # pattern = ic._normalise_folder('%')
+        # typ, dat = ic._imap._simple_command(cmd, directory, pattern, 'RETURN (STATUS (MESSAGES SIZE))')
+        # print(dat)
+        # typ, dat = ic._imap._untagged_response(typ, dat, cmd)
+        # print(dat)
         for _ in self._client.list_folders():
             folder = _[2]
             root.add(folder)
@@ -229,10 +237,14 @@ class ImapClient:
     ##############################################
 
     def folder_size(self, folder: Folder | str) -> int:
+        # require: STATUS=SIZE
         try:
             _ = self._client.folder_status(str(folder), what=('SIZE'))
             return _[b'SIZE']
         except imaplib.IMAP4.error:
+            # self.select_folder(folder)
+            # for _ in self._client.fetch('1:*', ['RFC822.SIZE']).items():
+            #     print(_)
             raise ImapExtensionError("STATUS SIZE")
 
     ##############################################
