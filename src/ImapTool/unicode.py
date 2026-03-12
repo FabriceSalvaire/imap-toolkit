@@ -10,8 +10,8 @@ __all__ = ['collator']
 
 ####################################################################################################
 
+# To sort correctly latin and unicode
 import icu
-# from icu import Collator, Locale  # To sort correctly latin and unicode
 
 ####################################################################################################
 

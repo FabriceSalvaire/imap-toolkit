@@ -35,7 +35,7 @@ def _humanize(
     BASE = 1024 if binary else 1000
     I_PREFIX = 'i' if binary else ''
     PREFIXES = ('', 'k', 'M', 'G', 'T', 'P')
-    DOT_ZERO = '.' + '0'*number_of_digits
+    DOT_ZERO = '.' + '0' * number_of_digits
     remain: float = size
     for prefix in PREFIXES:
         next_remain = remain / BASE

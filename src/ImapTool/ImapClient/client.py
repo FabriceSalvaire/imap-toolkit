@@ -10,13 +10,14 @@ __all__ = ['Folder', 'ImapClient']
 
 ####################################################################################################
 
-from typing import Self, Callable
+from collections.abc import Callable
 
 import imapclient
 
+from ImapTool.unicode import collator
+
 from .config import ImapClientConfig
 from .email import Email
-from ImapTool.unicode import collator
 
 ####################################################################################################
 
@@ -27,8 +28,8 @@ class Folder:
     def __init__(
         self,
         name: str,
-        parent: 'Folder' | None = None,
-        client: 'ImapClient' | None = None,
+        parent: Folder | None = None,
+        client: ImapClient | None = None,
     ) -> None:
         self._name = name
         self._parent: Folder | None = parent
@@ -62,7 +63,7 @@ class Folder:
 
     ##############################################
 
-    def find_parent(self, folder: str) -> tuple['Folder' | None, str]:
+    def find_parent(self, folder: str) -> tuple[Folder | None, str]:
         # It assumes parents are build before childs
         # print(f"find_parent '{folder}'")
         *parents, name = folder.split('/')
@@ -76,7 +77,7 @@ class Folder:
             parent = parent._childs[_]
         return parent, name
 
-    def find(self, folder: str) -> 'Folder':
+    def find(self, folder: str) -> Folder:
         parts = folder.split('/')
         if parts.pop(0) != self._name:
             raise ValueError(f"Invalid root for {folder} should be {self._name}")
@@ -87,7 +88,7 @@ class Folder:
  
     ##############################################
 
-    def add(self, folder: str) -> 'Folder':
+    def add(self, folder: str) -> Folder:
         parent, name = self.find_parent(folder)
         if parent is not None:
             child = Folder(name, parent, self._client)
@@ -99,7 +100,7 @@ class Folder:
 
     def depth_first_search(self, callback: Callable, callback_data=None, level: int = 0) -> None:
         callback(self, callback_data, level)
-        for name, child in sorted(self._childs.items(), key=lambda t: collator.getSortKey(t[0])):
+        for _, child in sorted(self._childs.items(), key=lambda t: collator.getSortKey(t[0])):
             child.depth_first_search(callback, callback_data, level + 1)
 
     ##############################################
@@ -184,7 +185,7 @@ class ImapClient:
         for quota in self.quota:
             match quota.resource:
                 case 'STORAGE':
-                    return quota.usage*1024
+                    return quota.usage * 1024
         raise NotImplementedError
 
     ##############################################

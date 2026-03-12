@@ -30,7 +30,7 @@ class CallbackData:
 
 def folder_callback(folder: Folder, callback_data, level: int) -> None:
     console = callback_data.console
-    indent = ' '*level*4
+    indent = ' ' * level * 4
     line = f'{indent}"{folder.name}"'
     line = f'{line:<40}'
     try:

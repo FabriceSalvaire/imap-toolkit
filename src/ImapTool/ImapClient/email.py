@@ -10,13 +10,12 @@ __all__ = ['Email']
 
 ####################################################################################################
 
-from datetime import datetime
-from typing import TYPE_CHECKING
 import email as py_email
-import email.header as py_email_header
 import email.iterators as py_email_iterators
 import email.policy as py_email_policy
 import email.utils as py_email_utils
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .client import Folder
@@ -29,7 +28,7 @@ class Email:
 
     def __init__(
         self,
-        folder: 'Folder',
+        folder: Folder,
         id: int,
         data: bytes,
     ):
@@ -43,7 +42,7 @@ class Email:
     ##############################################
 
     @property
-    def folder(self) -> 'Folder':
+    def folder(self) -> Folder:
         return self._folder
 
     @property
@@ -59,27 +58,6 @@ class Email:
         return len(self._data)
 
     ##############################################
-
-    def _decode(self, value: str) -> str:
-        # print(value)
-        parts = py_email_header.decode_header(value)
-        # print(parts)
-        new_value = ''
-        for decoded_bytes, encoding in parts:
-            if encoding is None:
-                if isinstance(decoded_bytes, bytes):
-                    _ = decoded_bytes.decode()
-                else:
-                    _ = decoded_bytes
-            else:
-                try:
-                    _ = decoded_bytes.decode(encoding)
-                except LookupError:
-                    # unknown-8bit
-                    # raise NameError(f'Encoding {value}')
-                    return value
-            new_value += _
-        return new_value
 
     def _parse(self) -> None:
         # py_email_utils.decode_rfc2231
