@@ -12,10 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, Callable
 import argparse
-import email
+import email as py_email
+import email.utils as py_email_utils
+import email.header as py_email_header
 import logging
 
-from icu import Collator, Locale  # To sort correctly latin and unicode
+import icu
+# from icu import Collator, Locale  # To sort correctly latin and unicode
 
 import imapclient
 
@@ -33,16 +36,21 @@ from rich.console import Console
 ####################################################################################################
 
 # Fixme:
-collator = Collator.createInstance(Locale('fr_FR'))
+collator = icu.Collator.createInstance(icu.Locale('fr_FR'))  # ty:ignore[unresolved-attribute]
 
 ####################################################################################################
 
-def _humanize(size: int, binary: bool = False, number_of_digits: int = 1) -> str:  # ty:ignore[invalid-return-type]
+def _humanize(
+    size: int,
+    binary: bool = False,
+    number_of_digits: int = 1,
+    prefix_space: bool = True,
+) -> str:  # ty:ignore[invalid-return-type]
     # if not size:
     #     return None
     BASE = 1024 if binary else 1000
     I_PREFIX = 'i' if binary else ''
-    PREFIXES = (' ', 'k', 'M', 'G', 'T', 'P')
+    PREFIXES = ('', 'k', 'M', 'G', 'T', 'P')
     DOT_ZERO = '.' + '0'*number_of_digits
     remain: float = size
     for prefix in PREFIXES:
@@ -52,7 +60,10 @@ def _humanize(size: int, binary: bool = False, number_of_digits: int = 1) -> str
             # remove .000
             if _.endswith(DOT_ZERO):
                 _ = _[:-len(DOT_ZERO)]
-            return f'{_} {prefix}{I_PREFIX}B'
+            if prefix_space:
+                return f'{_}{prefix:>2}{I_PREFIX}B'
+            else:
+                return f'{_}{prefix}{I_PREFIX}B'
         remain = next_remain
 
 def byte_humanize(size: int) -> str:
@@ -78,6 +89,106 @@ class ImapClientConfig:
 
 ####################################################################################################
 
+class Email:
+
+    ##############################################
+
+    def __init__(
+        self,
+        folder: 'Folder',
+        id: int,
+        data: bytes,
+    ):
+        # Fixme: slot ?
+        self._folder = folder
+        self._id = id
+        self._data = data
+        self._email = None
+
+    ##############################################
+
+    @property
+    def folder(self) -> 'Folder':
+        return self._folder
+
+    @property
+    def id(self) -> int:
+        return self._id
+
+    @property
+    def data(self) -> bytes:
+        return self._data
+
+    @property
+    def size(self) -> int:
+        return len(self._data)
+
+    ##############################################
+
+    def _decode(self, value: str) -> str:
+        # print(value)
+        parts = py_email_header.decode_header(value)
+        # print(parts)
+        new_value = ''
+        for decoded_bytes, encoding in parts:
+            if encoding is None:
+                if isinstance(decoded_bytes, bytes):
+                    _ = decoded_bytes.decode()
+                else:
+                    _ = decoded_bytes
+            else:
+                try:
+                    _ = decoded_bytes.decode(encoding)
+                except LookupError:
+                    # unknown-8bit
+                    # raise NameError(f'Encoding {value}')
+                    return value
+            new_value += _
+        return new_value
+
+    def _parse(self) -> None:
+        # py_email_utils.decode_rfc2231
+        if self._email is None:
+            self._email = py_email.message_from_bytes(self.data)
+            for key, value in self._email.items():
+                key = key.lower()
+                match key:
+                    case 'cc':
+                        self._cc = value
+                    case 'date':
+                        self._date = py_email_utils.parsedate_to_datetime(value)
+                    case 'from':
+                        self._from = self._decode(value)
+                    case 'subject':
+                        # according to
+                        # https://docs.python.org/3/library/email.header.html
+                        # it should be decoded...
+                        self._subject = self._decode(value).replace('\r\n', '')
+                    case 'to':
+                        self._to = value
+
+    @property
+    def from_(self) -> str:
+        self._parse()
+        return self._from
+
+    @property
+    def date(self) -> str:
+        self._parse()
+        return self._date
+
+    @property
+    def to(self) -> str:
+        self._parse()
+        return self._to
+
+    @property
+    def subject(self) -> str:
+        self._parse()
+        return self._subject
+
+####################################################################################################
+
 class Folder:
 
     ##############################################
@@ -92,6 +203,7 @@ class Folder:
         self._parent: Folder | None = parent
         self._childs: dict[str, Folder] = {}
         self._client = client
+        self._selected: bool = False
 
     ##############################################
 
@@ -133,12 +245,21 @@ class Folder:
             parent = parent._childs[_]
         return parent, name
 
+    def find(self, folder: str) -> 'Folder':
+        parts = folder.split('/')
+        if parts.pop(0) != self._name:
+            raise ValueError(f"Invalid root for {folder} should be {self._name}")
+        parent = self
+        for _ in parts:
+            parent = parent._childs[_]
+        return parent
+ 
     ##############################################
 
     def add(self, folder: str) -> 'Folder':
         parent, name = self.find_parent(folder)
         if parent is not None:
-            child = Folder(name, parent)
+            child = Folder(name, parent, self._client)
             parent._childs[name] = child
             return child
         return self
@@ -152,12 +273,46 @@ class Folder:
 
     ##############################################
 
+    def _check_client(self) -> None:
+        if self._client is None:
+            raise NameError('Client is None')
+
     def select(self) -> dict:
-        return self._client.select_folder(self.full_name)
+        self._check_client()
+        _ = self._client.select_folder(self.full_name)  # ty:ignore[unresolved-attribute]
+        self._selected = True
+        return _
+
+    def close(self) -> str:
+        if self._selected:
+            self._check_client()
+            _ = self._client.close_folder()  # ty:ignore[unresolved-attribute]
+            self._selected = False
+            return _
+        else:
+            raise NameError(f"Folder {self} is not selected")
 
     @property
     def size(self) -> int:
-        return self._client.folder_size(self.full_name)
+        self._check_client()
+        return self._client.folder_size(self.full_name)  # ty:ignore[unresolved-attribute]
+
+    @property
+    def number_of_mails(self) -> int:
+        _ = self.select()
+        self._client.close_folder()  # ty:ignore[unresolved-attribute]
+        return _[b'EXISTS']
+
+    ##############################################
+
+    def ids(self, sorting: str = 'recent') -> list[int]:
+        self.select()
+        return self._client.folder_ids(sorting)  # ty:ignore[unresolved-attribute]
+
+    def fetch(self, email_id: int) -> Email:
+        self.select()
+        data = self._client.fetch(email_id)  # ty:ignore[unresolved-attribute]
+        return Email(self, email_id, data)
 
 ####################################################################################################
 
@@ -170,6 +325,7 @@ class ImapClient:
         self._client = imapclient.IMAPClient(config.server, use_uid=True)
         _ = self._client.login(config.user, config.password)
         # _ == b'Logged in'
+        self._inbox: Folder | None = None
 
     ##############################################
 
@@ -192,36 +348,6 @@ class ImapClient:
 
     ##############################################
 
-    def build_folder_tree(self) -> None:
-        inbox = Folder('INBOX')
-        for _ in self._client.list_folders():
-            folder = _[2]
-            if folder != 'INBOX':
-                inbox.add(folder)
-        self._inbox = inbox
-
-    @property
-    def inbox(self) -> Folder:
-        return self._inbox
-
-    ##############################################
-
-    def select_folder(self, folder: Folder | str) -> dict:
-        return self._client.select_folder(str(folder), readonly=True)
-
-    ##############################################
-
-    # def folder_ids(self, folder: Folder | str) -> list[int]:
-    #     self.select_folder(folder)
-    def folder_ids(self) -> list[int]:
-        return self._client.search('ALL')
-
-    def fetch(self, email_id: int) -> str:
-        _ = self._client.fetch(email_id, ['RFC822'])
-        return _[email_id][b'RFC822']
-
-    ##############################################
-
     @property
     def size(self) -> int:
         for quota in client.quota:
@@ -232,9 +358,57 @@ class ImapClient:
 
     ##############################################
 
+    def build_folder_tree(self) -> None:
+        if self._inbox is not None:
+            return
+        inbox = Folder('INBOX', client=self)
+        for _ in self._client.list_folders():
+            folder = _[2]
+            if folder != 'INBOX':
+                inbox.add(folder)
+        self._inbox = inbox
+
+    @property
+    def inbox(self) -> Folder:
+        if self._inbox is None:
+            self.build_folder_tree()
+        return self._inbox  # ty:ignore[invalid-return-type]
+
+    ##############################################
+
     def folder_size(self, folder: Folder | str) -> int:
         _ = self._client.folder_status(str(folder), what=('SIZE'))
         return _[b'SIZE']
+
+    ##############################################
+
+    def select_folder(self, folder: Folder | str) -> dict:
+        return self._client.select_folder(str(folder), readonly=True)
+
+    def close_folder(self) -> str:
+        return self._client.close_folder()
+
+    ##############################################
+
+    # def folder_ids(self, folder: Folder | str) -> list[int]:
+    #     self.select_folder(folder)
+    def folder_ids(self, sorting: str = '') -> list[int]:
+        # ARRIVAL CC FROM SIZE SUBJECT TO
+        match sorting:
+            case 'from':
+                return self._client.sort(['FROM'])
+            case 'subject':
+                return self._client.sort(['SUBJECT'])
+            case 'recent':
+                return self._client.sort(['REVERSE DATE'])
+            case 'size':
+                return self._client.sort(['REVERSE SIZE'])
+            case _:
+                return self._client.search('ALL')
+
+    def fetch(self, email_id: int) -> bytes:
+        _ = self._client.fetch(email_id, ['RFC822'])
+        return _[email_id][b'RFC822']
 
 ####################################################################################################
 
@@ -251,9 +425,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
     line = f'{line:<40}'
     try:
         callback_data.number_of_folders += 1
-        number_of_mails = client.select_folder(folder)[b'EXISTS']
+        number_of_mails = folder.number_of_mails
         callback_data.number_of_mails += number_of_mails
-        size = client.folder_size(folder)
+        size = folder.size
         percent = 100 * size / callback_data.size
         if percent < 1:
             percent_str = '  <  '
@@ -264,8 +438,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
         callback_data.size2 += size
         _ = byte_humanize(size)
         console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
-        console.print(f'  "{folder.full_name}"')
+        # console.print(f'  "{folder.full_name}"')
     except Exception as e:
+        # print(e)
         console.print(f'{line} [red]!!!')
     # console.print(f'"{folder}"')
 
@@ -329,7 +504,6 @@ if args.quota:
                 console.print(f"  {title:<20} {quota.usage:_} / {quota.limit:_} @{percent} %")
 
 if args.folders:
-    client.build_folder_tree()
     console.print()
     console.print("[yellow]Folders:")
     size1 = client.size
@@ -340,16 +514,28 @@ if args.folders:
     console.print(f"  #folders {callback_data.number_of_folders}")
     console.print(f"{' '*40} {callback_data.number_of_mails:>8_} {size:>8}")
 
-folder = 'INBOX/Compte Site Web'
-client.select_folder(folder)
-email_ids = client.folder_ids()
-email_id = email_ids[0]
-_ = client.fetch(email_id)
-console.print(_)
+folder_name = 'INBOX/Compte Site Web'
+# client.select_folder(folder_name)
+# email_ids = client.folder_ids()
+# email_id = email_ids[0]
+# _ = client.fetch(email_id)
 
-# message_data = _[email_id]
-# email_message = email.message_from_bytes(message_data[b"RFC822"])
-# console.print(email_message.get('From'))
+folder = client.inbox.find(folder_name)
+# email_ids = folder.ids
+# email_id = email_ids[0]
+# _ = folder.fetch(email_id)
+# console.print(_.data)
+# headers = set()
+for email_id in folder.ids('size')[:10]:
+    email = folder.fetch(email_id)
+    size = byte_humanize(email.size)
+    console.print(f"{email_id:6} {size:>8}")
+    # headers |= set(email_message.keys())
+    indent = ' '*10
+    console.print(f"{indent}{email.date}")
+    console.print(f"{indent}{email.from_}")
+    console.print(f"{indent}{email.subject}")
+# console.print(sorted(headers))
 
 # # _ = server.fetch(email_id, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])')
 # console.print(_)
