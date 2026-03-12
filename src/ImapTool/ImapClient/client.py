@@ -6,11 +6,12 @@
 #
 ####################################################################################################
 
-__all__ = ['Folder', 'ImapClient']
+__all__ = ['Folder', 'ImapClient', 'ImapExtensionError']
 
 ####################################################################################################
 
 from collections.abc import Callable
+import imaplib
 
 import imapclient
 
@@ -18,6 +19,11 @@ from ImapTool.unicode import collator
 
 from .config import ImapClientConfig
 from .email import Email
+
+####################################################################################################
+
+class ImapExtensionError(NameError):
+    pass
 
 ####################################################################################################
 
@@ -44,6 +50,10 @@ class Folder:
         return self._name
 
     @property
+    def is_root(self) -> bool:
+        return not self._name
+
+    @property
     def full_name(self) -> str:
         # parts = [self._name]
         # parent = self
@@ -53,10 +63,13 @@ class Folder:
         #         break
         #     parts.append(parent._name)
         # return '/'.join(reversed(parts))
-        if self._parent is not None:
-            return self._parent.full_name + '/' + self._name
+        if not self.is_root:
+            if self._parent.is_root:
+                return self._name
+            else:
+                return self._parent.full_name + '/' + self._name
         else:
-            return self._name
+            raise NameError("Folder is root")
 
     def __str__(self) -> str:
         return self.full_name
@@ -67,10 +80,8 @@ class Folder:
         # It assumes parents are build before childs
         # print(f"find_parent '{folder}'")
         *parents, name = folder.split('/')
-        if not parents and name == self._name:
-            return None, name
-        if parents.pop(0) != self._name:
-            raise ValueError(f"Invalid root for {folder} should be {self._name}")
+        if not parents:
+            return self, name
         parent = self
         for _ in parents:
             # print(f"  '{parent._name}' '{_}'")
@@ -79,8 +90,6 @@ class Folder:
 
     def find(self, folder: str) -> Folder:
         parts = folder.split('/')
-        if parts.pop(0) != self._name:
-            raise ValueError(f"Invalid root for {folder} should be {self._name}")
         parent = self
         for _ in parts:
             parent = parent._childs[_]
@@ -99,7 +108,8 @@ class Folder:
     ##############################################
 
     def depth_first_search(self, callback: Callable, callback_data=None, level: int = 0) -> None:
-        callback(self, callback_data, level)
+        if not self.is_root:
+            callback(self, callback_data, level)
         for _, child in sorted(self._childs.items(), key=lambda t: collator.getSortKey(t[0])):
             child.depth_first_search(callback, callback_data, level + 1)
 
@@ -157,7 +167,7 @@ class ImapClient:
         self._client = imapclient.IMAPClient(config.server, use_uid=True)
         _ = self._client.login(config.user, config.password)
         # _ == b'Logged in'
-        self._inbox: Folder | None = None
+        self._root: Folder | None = None
 
     ##############################################
 
@@ -175,8 +185,19 @@ class ImapClient:
 
     @property
     def quota(self) -> list:  # .Quota ???
-        # self._client.get_quota_root('INBOX')
-        return self._client.get_quota(mailbox='INBOX')
+        # OVH
+        #   (MailboxQuotaRoots(mailbox='INBOX', quota_roots=['']),
+        #    [Quota(quota_root='', resource='STORAGE', usage=4882231, limit=5242880)])
+        #    [Quota(quota_root='', resource='STORAGE', usage=4882231, limit=5242880)]
+        # Orange
+        #   (MailboxQuotaRoots(mailbox='INBOX', quota_roots=['userquota']),
+        #    [Quota(quota_root='userquota', resource='STORAGE', usage=8843043, limit=10485760),
+        #     Quota(quota_root='userquota', resource='MESSAGE', usage=140251, limit=1048576)])
+        #    [Quota(quota_root='userquota', resource='STORAGE', usage=8843043, limit=10485760),
+        #     Quota(quota_root='userquota', resource='MESSAGE', usage=140251, limit=1048576)]
+        # Fixme: INBOX
+        # _ = self._client.get_quota_root('INBOX')
+        return self._client.get_quota(mailbox="INBOX")
 
     ##############################################
 
@@ -191,26 +212,28 @@ class ImapClient:
     ##############################################
 
     def build_folder_tree(self) -> None:
-        if self._inbox is not None:
+        if self._root is not None:
             return
-        inbox = Folder('INBOX', client=self)
+        root = Folder('', client=self)
         for _ in self._client.list_folders():
             folder = _[2]
-            if folder != 'INBOX':
-                inbox.add(folder)
-        self._inbox = inbox
+            root.add(folder)
+        self._root = root
 
     @property
-    def inbox(self) -> Folder:
-        if self._inbox is None:
+    def root(self) -> Folder:
+        if self._root is None:
             self.build_folder_tree()
-        return self._inbox  # ty:ignore[invalid-return-type]
+        return self._root  # ty:ignore[invalid-return-type]
 
     ##############################################
 
     def folder_size(self, folder: Folder | str) -> int:
-        _ = self._client.folder_status(str(folder), what=('SIZE'))
-        return _[b'SIZE']
+        try:
+            _ = self._client.folder_status(str(folder), what=('SIZE'))
+            return _[b'SIZE']
+        except imaplib.IMAP4.error:
+            raise ImapExtensionError("STATUS SIZE")
 
     ##############################################
 

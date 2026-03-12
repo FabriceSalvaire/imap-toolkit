@@ -11,8 +11,9 @@ __all__ = [
     'Folder',
     'ImapClient',
     'ImapClientConfig',
+    'ImapExtensionError',
 ]
 
-from .client import Folder, ImapClient
+from .client import Folder, ImapClient, ImapExtensionError
 from .config import ImapClientConfig
 from .email import Email

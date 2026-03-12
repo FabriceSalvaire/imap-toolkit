@@ -58,8 +58,8 @@ class Cli:
         # self._completer = CustomCompleter(self, self.COMMANDS)
 
         self._client: ImapClient | None = None
-        if args.config and args.server:
-            self.login(args.config, args.server)
+        if args.server:
+            self.login(args.server)
 
     ##############################################
 
@@ -239,7 +239,7 @@ class Cli:
         size1 = self._client.size
         # print(f"Size {byte_humanize(size1)}")
         callback_data = CallbackData(console=self, size=size1, show_full_name=show_full_name)
-        self._client.inbox.depth_first_search(folder_callback, callback_data)
+        self._client.root.depth_first_search(folder_callback, callback_data)
         size = byte_humanize(callback_data.size2)
         self.print(f"  #folders {callback_data.number_of_folders}")
         self.print(f"{' ' * 40} {callback_data.number_of_mails:>8_} {size:>8}")

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from rich.console import Console
 
-from ImapTool.ImapClient import Folder
+from ImapTool.ImapClient import Folder, ImapExtensionError
 from ImapTool.printer import byte_humanize
 
 ####################################################################################################
@@ -33,10 +33,10 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
     indent = ' ' * level * 4
     line = f'{indent}"{folder.name}"'
     line = f'{line:<40}'
+    callback_data.number_of_folders += 1
+    number_of_mails = folder.number_of_mails
+    callback_data.number_of_mails += number_of_mails
     try:
-        callback_data.number_of_folders += 1
-        number_of_mails = folder.number_of_mails
-        callback_data.number_of_mails += number_of_mails
         size = folder.size
         percent = 100 * size / callback_data.size
         if percent < 1:
@@ -48,10 +48,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
         callback_data.size2 += size
         _ = byte_humanize(size)
         console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
-        if callback_data.show_full_name:
-            indent = ''
-            console.print(f'{indent}[blue]"{folder.full_name}"')
-    except Exception as e:
-        # print(e)
-        console.print(f'{line} [red]!!!')
+    except ImapExtensionError:
+        console.print(f'{line} {number_of_mails:>8_} ??? ??? %')
+    if callback_data.show_full_name:
+        indent = ''
+        console.print(f'{indent}[blue]"{folder.full_name}"')
     # console.print(f'"{folder}"')
