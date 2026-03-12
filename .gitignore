@@ -10,3 +10,11 @@ wheels/
 .venv
 
 *~
+
+__TRASH__/
+config.yaml
+csw.mbox
+devel/
+orange-mailboxe.json
+resources/
+spam-filter

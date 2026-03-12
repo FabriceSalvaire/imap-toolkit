@@ -6,5 +6,5 @@ source .venv/bin/activate
 #   This is equivalent to specifying the -X pycache_prefix=PATH option.
 export PYTHONPYCACHEPREFIX=$PWD/.pycache
 
-append_to_python_path_if_not $PWD
+append_to_python_path_if_not $PWD/src
 # append_to_path_if_not $PWD/bin
