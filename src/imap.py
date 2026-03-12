@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import Self, Callable
 import argparse
 import email as py_email
-import email.utils as py_email_utils
 import email.header as py_email_header
+import email.iterators as py_email_iterators
+import email.policy as py_email_policy
+import email.utils as py_email_utils
 import logging
+import mailbox
 
 import icu
 # from icu import Collator, Locale  # To sort correctly latin and unicode
@@ -149,7 +152,7 @@ class Email:
     def _parse(self) -> None:
         # py_email_utils.decode_rfc2231
         if self._email is None:
-            self._email = py_email.message_from_bytes(self.data)
+            self._email = py_email.message_from_bytes(self.data, policy=py_email_policy.default)
             for key, value in self._email.items():
                 key = key.lower()
                 match key:
@@ -158,12 +161,9 @@ class Email:
                     case 'date':
                         self._date = py_email_utils.parsedate_to_datetime(value)
                     case 'from':
-                        self._from = self._decode(value)
+                        self._from = value
                     case 'subject':
-                        # according to
-                        # https://docs.python.org/3/library/email.header.html
-                        # it should be decoded...
-                        self._subject = self._decode(value).replace('\r\n', '')
+                        self._subject = value
                     case 'to':
                         self._to = value
 
@@ -186,6 +186,11 @@ class Email:
     def subject(self) -> str:
         self._parse()
         return self._subject
+
+    ##############################################
+
+    def structure(self) -> None:
+        py_email_iterators._structure(self._email, level=4)
 
 ####################################################################################################
 
@@ -414,6 +419,7 @@ class ImapClient:
 
 @dataclass
 class CallbackData:
+    show_full_name: bool = False
     number_of_mails: int = 0
     number_of_folders: int = 0
     size: int = 0
@@ -438,7 +444,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
         callback_data.size2 += size
         _ = byte_humanize(size)
         console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
-        # console.print(f'  "{folder.full_name}"')
+        if callback_data.show_full_name:
+            indent = ''
+            console.print(f'{indent}[blue]"{folder.full_name}"')
     except Exception as e:
         # print(e)
         console.print(f'{line} [red]!!!')
@@ -469,6 +477,10 @@ parser.add_argument(
 )
 parser.add_argument(
     '--folders',
+    action='store_true',
+)
+parser.add_argument(
+    '--folders-full-name',
     action='store_true',
 )
 args = parser.parse_args()
@@ -508,7 +520,7 @@ if args.folders:
     console.print("[yellow]Folders:")
     size1 = client.size
     # print(f"Size {byte_humanize(size1)}")
-    callback_data= CallbackData(size=size1)
+    callback_data= CallbackData(size=size1, show_full_name=args.folders_full_name)
     client.inbox.depth_first_search(folder_callback, callback_data)
     size = byte_humanize(callback_data.size2)
     console.print(f"  #folders {callback_data.number_of_folders}")
@@ -526,7 +538,8 @@ folder = client.inbox.find(folder_name)
 # _ = folder.fetch(email_id)
 # console.print(_.data)
 # headers = set()
-for email_id in folder.ids('size')[:10]:
+mbox = mailbox.mbox('csw.mbox')
+for email_id in folder.ids('size')[:100]:
     email = folder.fetch(email_id)
     size = byte_humanize(email.size)
     console.print(f"{email_id:6} {size:>8}")
@@ -535,6 +548,8 @@ for email_id in folder.ids('size')[:10]:
     console.print(f"{indent}{email.date}")
     console.print(f"{indent}{email.from_}")
     console.print(f"{indent}{email.subject}")
+    email.structure()
+    mbox.add(email.data)
 # console.print(sorted(headers))
 
 # # _ = server.fetch(email_id, '(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])')
