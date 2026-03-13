@@ -57,6 +57,16 @@ class Email:
     def size(self) -> int:
         return len(self._data)
 
+    @property
+    def email(self) -> py_email.Message:
+        self._parse()
+        return self._email
+
+    @property
+    def headers(self) -> list[str]:
+        self._parse()
+        return list(self._email.keys())
+
     ##############################################
 
     def _parse(self) -> None:

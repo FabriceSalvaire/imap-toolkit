@@ -44,6 +44,11 @@ type FolderName = str
 
 ####################################################################################################
 
+def percent_of(value: int, total: int) -> int:
+    return round((100 * value) / total)
+
+####################################################################################################
+
 class CustomCompleter(Completer):
 
     """
@@ -368,7 +373,7 @@ class Cli:
         self.print("[yellow]Quota:")
         for quota in self._client.quota:
             # self.print(quota)
-            percent = round(100 * quota.usage / quota.limit)
+            percent = percent_of(quota.usage, quota.limit)
             match quota.resource:
                 case 'STORAGE':
                     usage = byte_humanize(quota.usage * 1024)
@@ -410,6 +415,23 @@ class Cli:
             self.print(f"{indent}{email.subject}")
             # email.structure()
         # self.print(sorted(headers))
+
+    ##############################################
+
+    def header_stat(self, folder_name: FolderName) -> None:
+        folder = self._client.root.find(folder_name)
+        headers = {}
+        email_count = 0
+        for email_id in folder.ids():
+            email_count += 1
+            email = folder.fetch(email_id)
+            for _ in email.headers:
+                headers.setdefault(_, 0)
+                headers[_] += 1
+        for name in sorted(headers):
+            count = headers[name]
+            percent = percent_of(count, email_count)
+            self.print(f"  {name:50}  {percent:5.1f}%  {count:6}")
 
     ##############################################
 
