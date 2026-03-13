@@ -1,0 +1,13 @@
+- CLI fix for folder name with space
+- CLI add spinbox
+- stat
+  - header size
+  - extra header size
+  - parts size
+  - number of attachments
+- email
+  - pretty print raw
+  - to JSON
+  - test compression
+  - test to prune extra header
+- extra header purpose
