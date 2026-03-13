@@ -10,8 +10,9 @@ __all__ = ['Folder', 'ImapClient', 'ImapExtensionError']
 
 ####################################################################################################
 
-from collections.abc import Callable
-import imaplib
+import mailbox
+from collections.abc import Callable, Iterator
+from pathlib import Path
 
 import imapclient
 
@@ -19,6 +20,10 @@ from ImapTool.unicode import collator
 
 from .config import ImapClientConfig
 from .email import Email
+
+####################################################################################################
+
+type PathStr = Path | str
 
 ####################################################################################################
 
@@ -94,7 +99,21 @@ class Folder:
         for _ in parts:
             parent = parent._childs[_]
         return parent
- 
+
+    ##############################################
+
+    @property
+    def has_childs(self) -> bool:
+        return bool(self._childs)
+
+    # @property
+    # def childs(self) -> list[str]:
+    #     return list(self._childs.keys())
+
+    @property
+    def childs(self) -> Iterator[Folder]:
+        return self._childs.values()
+
     ##############################################
 
     def add(self, folder: str) -> Folder:
@@ -156,6 +175,18 @@ class Folder:
         data = self._client.fetch(email_id)  # ty:ignore[unresolved-attribute]
         return Email(self, email_id, data)
 
+    ##############################################
+
+    def save(self, path: PathStr, sorting='recent', limit: int = -1) -> None:
+        path = Path(path)
+        if not path.exists():
+            mbox = mailbox.mbox(path)
+            for email_id in self.ids(sorting)[:limit]:
+                email = self.fetch(email_id)
+                mbox.add(email.data)
+        else:
+            raise NameError(f"Mbox {path} exists")
+
 ####################################################################################################
 
 class ImapClient:
@@ -168,18 +199,23 @@ class ImapClient:
         _ = self._client.login(config.user, config.password)
         # _ == b'Logged in'
         self._root: Folder | None = None
+        self._get_capabilities()
+
+    ##############################################
+
+    def _get_capabilities(self) -> list[str]:
+        self._capabilities = [_.decode('ASCII') for _ in self._client.capabilities()]
+        self._has_status_size = 'STATUS=SIZE' in self._capabilities
+
+    @property
+    def capabilities(self) -> list[str]:
+        return self._capabilities
 
     ##############################################
 
     @property
     def config(self) -> ImapClientConfig:
         return self._config
-
-    ##############################################
-
-    @property
-    def capabilities(self) -> list[str]:
-        return [_.decode('ASCII') for _ in self._client.capabilities()]
 
     ##############################################
 
@@ -206,7 +242,8 @@ class ImapClient:
         for quota in self.quota:
             match quota.resource:
                 case 'STORAGE':
-                    return quota.usage * 1024
+                    # Fixme: 1024 or 1000
+                    return quota.usage * 1000
         raise NotImplementedError
 
     ##############################################
@@ -215,14 +252,6 @@ class ImapClient:
         if self._root is not None:
             return
         root = Folder('', client=self)
-        # ic = self._client
-        # cmd = 'LIST'
-        # directory = ic._normalise_folder('')
-        # pattern = ic._normalise_folder('%')
-        # typ, dat = ic._imap._simple_command(cmd, directory, pattern, 'RETURN (STATUS (MESSAGES SIZE))')
-        # print(dat)
-        # typ, dat = ic._imap._untagged_response(typ, dat, cmd)
-        # print(dat)
         for _ in self._client.list_folders():
             folder = _[2]
             root.add(folder)
@@ -237,15 +266,23 @@ class ImapClient:
     ##############################################
 
     def folder_size(self, folder: Folder | str) -> int:
-        # require: STATUS=SIZE
-        try:
+        # ic = self._client
+        # cmd = 'LIST'
+        # directory = ic._normalise_folder('')
+        # pattern = ic._normalise_folder('%')
+        # typ, dat = ic._imap._simple_command(cmd, directory, pattern, 'RETURN (STATUS (MESSAGES SIZE))')
+        # typ, dat = ic._imap._untagged_response(typ, dat, cmd)
+        # print(dat)
+        if self._has_status_size:
+            # require: STATUS=SIZE
             _ = self._client.folder_status(str(folder), what=('SIZE'))
             return _[b'SIZE']
-        except imaplib.IMAP4.error:
-            # self.select_folder(folder)
-            # for _ in self._client.fetch('1:*', ['RFC822.SIZE']).items():
-            #     print(_)
-            raise ImapExtensionError("STATUS SIZE")
+        else:
+            self.select_folder(folder)
+            size = 0
+            for _, data in self._client.fetch('1:*', ['RFC822.SIZE']).items():
+                size += data[b'RFC822.SIZE']
+            return size
 
     ##############################################
 

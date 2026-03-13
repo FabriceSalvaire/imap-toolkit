@@ -15,15 +15,17 @@ __all__ = ['Cli']
 import argparse
 import inspect
 import os
+import re
 import traceback
+from collections.abc import Iterable
 from pathlib import Path
 
 # See also [cmd — Support for line-oriented command interpreters — Python documentation](https://docs.python.org/3/library/cmd.html)
 # Python Prompt Toolkit](https://python-prompt-toolkit.readthedocs.io/en/master/)
-# from prompt_toolkit.completion import CompleteEvent, Completer, Completion, WordCompleter
 # from prompt_toolkit.shortcuts import ProgressBar
 from prompt_toolkit import PromptSession, shortcuts
-from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.completion import CompleteEvent, Completer, Completion
+from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
 
 from ImapTool.folder_helpers import CallbackData, folder_callback
@@ -38,6 +40,154 @@ LINESEP = os.linesep
 
 type PathStr = Path | str
 type CommandName = str
+type FolderName = str
+
+####################################################################################################
+
+class CustomCompleter(Completer):
+
+    """
+    Simple autocompletion on a list of words.
+
+    :param words: List of words or callable that returns a list of words.
+    :param ignore_case: If True, case-insensitive completion.
+    :param meta_dict: Optional dict mapping words to their meta-text. (This
+        should map strings to strings or formatted text.)
+    :param WORD: When True, use WORD characters.
+    :param sentence: When True, don't complete by comparing the word before the
+        cursor, but by comparing all the text before the cursor. In this case,
+        the list of words is just a list of strings, where each string can
+        contain spaces. (Can not be used together with the WORD option.)
+    :param match_middle: When True, match not only the start, but also in the
+                         middle of the word.
+    :param pattern: Optional compiled regex for finding the word before
+        the cursor to complete. When given, use this regex pattern instead of
+        default one (see document._FIND_WORD_RE)
+    """
+
+    ##############################################
+
+    def __init__(self, cli, commands: list[str]) -> None:
+        self._cli = cli
+        self._commands = commands
+
+        self.ignore_case = True
+        # self.display_dict = display_dict or {}
+        # self.meta_dict = meta_dict or {}
+        self.WORD = False
+        self.sentence = False
+        self.match_middle = False
+        self.pattern = None
+
+    ##############################################
+
+    def _get_word_before_cursor1(self, document, separator: str) -> str:
+        line = document.current_line
+        index = line.rfind(separator)
+        # "dump " -> ""
+        # "dump /foo/b" -> "b"
+        return line[index + 1:]
+
+    def _get_word_before_cursor2(self, document, separator: str) -> str:
+        return document.text_before_cursor
+
+    # cf. prompt_toolkit/completion/word_completer.py
+    def _get_completions(
+            self,
+            document: Document,
+            complete_event: CompleteEvent,
+            words: list[str],
+            separator: str,
+            get_word_before_cursor,
+    ) -> Iterable[Completion]:
+        word_before_cursor = get_word_before_cursor(document, separator)
+
+        def word_matches(word: str) -> bool:
+            return word.startswith(word_before_cursor)
+
+        for _ in words:
+            if word_matches(_):
+                yield Completion(
+                    text=_,
+                    start_position=-len(word_before_cursor),
+                )
+
+    ##############################################
+
+    def get_completions(
+            self,
+            document: Document,
+            complete_event: CompleteEvent,
+    ) -> Iterable[Completion]:
+        # Get command info
+        line = document.current_line.lstrip()
+        # remove multiple spaces
+        line = re.sub(' +', ' ', line)
+        number_of_parameters = line.count(' ')
+        command = None
+        right_word = None
+        parameter_type = None
+        if number_of_parameters:
+            # words = [_ for _ in line.split(' ') if _]
+            # command = words[0]
+            index = line.rfind(' ')
+            right_word = line[index + 1:]
+            index = line.find(' ')
+            command = line[:index]
+            try:
+                func = getattr(Cli, command)
+                signature = inspect.signature(func)
+                parameters = list(signature.parameters.values())
+                if len(parameters) > 1:
+                    parameter = parameters[number_of_parameters]   # 0 is self
+                    parameter_type = parameter.annotation.__name__   # Fixme: case type alias ???
+            except AttributeError:
+                pass
+        # print(f'Debug: "{command}" | "{right_word}" | {number_of_parameters} | {parameter_type}')
+
+        separator = ' '
+        get_word_before_cursor = self._get_word_before_cursor1
+
+        def handle_folder(right_word):
+            if '/' in right_word:
+                nonlocal separator
+                separator = '/'
+            # if right_word.startswith('/'):
+            #     current_path = root_path
+            # cwd = current_path.find(right_word)
+            i = right_word.rfind('/')
+            if i != -1:
+                parent_path = right_word[:i]
+                parent = self._cli._client.root.find(parent_path)
+                childs = parent.childs
+            else:
+                childs = self._cli._client.root.childs
+            # we have to enter a key to trigger the completion, tab doesn't work ???
+            # return [_.name + ('/' if _.has_childs else '') for _ in childs]
+            return [_.name for _ in childs]
+
+        if command is None:
+            # case "du" -> "dump"
+            words = self._commands
+        elif document.current_char == ' ' and document.cursor_position < (len(document.current_line) - 1):
+            # case "du /foo" -> "dump /foo"
+            words = self._commands
+            get_word_before_cursor = self._get_word_before_cursor2
+        else:
+            # case "dump " -> "dump /foo"
+            words = ()
+            match parameter_type:
+                # case 'bool':
+                #     words = ('true', 'false')
+                case 'CommandName':
+                    words = self._commands
+                # case 'FilePath':
+                #     cwd = Path().cwd()
+                #     filenames = sorted(cwd.glob('*.*'))
+                #     words = [_.name for _ in filenames]
+                case 'FolderName':
+                    words = handle_folder(right_word)
+        yield from self._get_completions(document, complete_event, words, separator, get_word_before_cursor)
 
 ####################################################################################################
 
@@ -54,8 +204,8 @@ class Cli:
             if not (_.startswith('_') or _[0].isupper() or _ in ('cli', 'run', 'print'))
         ]
         self.COMMANDS.sort()
-        self._completer = WordCompleter(self.COMMANDS)
-        # self._completer = CustomCompleter(self, self.COMMANDS)
+        # self._completer = WordCompleter(self.COMMANDS)
+        self._completer = CustomCompleter(self, self.COMMANDS)
 
         self._client: ImapClient | None = None
         if args.server:
@@ -243,3 +393,28 @@ class Cli:
         size = byte_humanize(callback_data.size2)
         self.print(f"  #folders {callback_data.number_of_folders}")
         self.print(f"{' ' * 40} {callback_data.number_of_mails:>8_} {size:>8}")
+
+    ##############################################
+
+    def list_folder(self, folder_name: FolderName, limit: str = '25') -> None:
+        limit = int(limit)
+        folder = self._client.root.find(folder_name)
+        for email_id in folder.ids('recent')[:limit]:
+            email = folder.fetch(email_id)
+            size = byte_humanize(email.size)
+            self.print(f"{email_id:6} {size:>8}")
+            # headers |= set(email_message.keys())
+            indent = ' ' * 10
+            self.print(f"{indent}{email.date}")
+            self.print(f"{indent}{email.from_}")
+            self.print(f"{indent}{email.subject}")
+            # email.structure()
+        # self.print(sorted(headers))
+
+    ##############################################
+
+    def save(self, folder_name: FolderName, mbox_file: str, limit: str = '25') -> None:
+        # Fixme: sorting ?
+        limit = int(limit)
+        folder = self._client.root.find(folder_name)
+        folder.save(mbox_file, 'recent', limit)
