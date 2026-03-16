@@ -8,6 +8,7 @@
 
 __all__ = [
     'byte_humanize',
+    'console',
     'ibyte_humanize',
     'init_console',
 ]
@@ -15,11 +16,29 @@ __all__ = [
 ####################################################################################################
 
 from rich.console import Console
+from rich.theme import Theme
 
 ####################################################################################################
 
+console = None
+
 def init_console() -> Console:
-    console = Console()
+    theme = Theme({
+        'bytes': 'green',
+        'danger': 'bold red',
+        'debug': 'bold red',
+        'func': 'blue',
+        'warning': 'magenta',
+        'imap_cmd_id': 'violet',
+        'imap_cmd': 'slate_blue1',
+        'imap_rn': 'gold1',
+        'imap_star': 'gold1',
+        'imap_ok': 'hot_pink3',
+    })
+
+    global console
+    if console is None:
+        console = Console(theme=theme)
     return console
 
 ####################################################################################################

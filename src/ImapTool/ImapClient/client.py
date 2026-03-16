@@ -6,13 +6,20 @@
 #
 ####################################################################################################
 
-__all__ = ['Folder', 'ImapClient', 'ImapExtensionError']
+__all__ = [
+    'add_logging_to_imaplib',
+    'Folder',
+    'ImapClient',
+    'ImapExtensionError',
+]
 
 ####################################################################################################
 
 import mailbox
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+from rich.console import Console
 
 import imapclient
 
@@ -29,6 +36,76 @@ type PathStr = Path | str
 
 class ImapExtensionError(NameError):
     pass
+
+####################################################################################################
+
+def add_logging_to_imaplib(console: Console) -> None:
+    import imaplib
+
+    cls = imaplib.IMAP4
+    py_read = cls.read
+    py_readline = cls.readline
+    py_send = cls.send
+
+    COMMANDS = list(imaplib.Commands.keys())
+    RESPONSES = ('OK', 'NO', 'BAD', 'PREAUTH', 'BYE')
+
+    COMMAND_IDS: list[str] = []
+
+    def split(text: str) -> tuple[int, int]:
+        s1 = text.find(' ')
+        if s1 == -1:
+            raise ValueError
+        s2 = text.find(' ', s1+1)
+        if s2 == -1:
+            s2 = text.find('\r', s1+1)
+        return s1, s2
+
+    def log(func: str, data: bytes) -> bytes:
+        try:
+            text = data.decode('ASCII')
+            if text != '\r\n':
+                if func.startswith('send'):
+                    s1, s2 = split(text)
+                    command_id = text[:s1]
+                    COMMAND_IDS.append(command_id)
+                    command = text[s1+1:s2]
+                    args = text[s2+1:]
+                    if command not in COMMANDS:
+                        raise ValueError
+                    text = f'[imap_cmd_id]{command_id}[/] [imap_cmd]{command}[/] [imap_args]{args}[/]'
+                else:
+                    s1, s2 = split(text)
+                    p1 = text[:s1]
+                    p2 = text[s1+1:s2]
+                    p3 = text[s2:]
+                    if p1 in COMMAND_IDS and p2 in RESPONSES:
+                        COMMAND_IDS.remove(p1)
+                        text = f'[imap_cmd_id]{p1}[/] [imap_ok]{p2}[/] [imap_args]{p3}[/]'
+                    elif p1 in '*-' and p2 in RESPONSES:
+                        text = f'[imap_star]{p1}[/] [imap_ok]{p2}[/] [imap_args]{p3}[/]'
+                    elif p1 in '*-':
+                        text = f'[imap_star]{p1}[/] [imap_args]{p2} {p3}[/]'
+            text = text.replace('\r\n', ' [imap_rn]\\r\\n[/]')
+            console.print(f'[debug]DEBUG:[/] [func]IMAP4.{func:8}[/] {text}')
+        except Exception as e:
+            console.print(f'{func} {data}')
+            # console.print(e)
+            raise e
+        return data
+
+    def read(self, size):
+        return log('read', py_read(self, size))
+
+    def readline(self):
+        return log('readline', py_readline(self))
+
+    def send(self, data):
+        py_send(self, log('send', data))
+
+    cls.read = read
+    cls.readline = readline
+    cls.send = send
 
 ####################################################################################################
 
@@ -193,8 +270,12 @@ class ImapClient:
 
     ##############################################
 
-    def __init__(self, config: ImapClientConfig) -> None:
+    def __init__(self, config: ImapClientConfig, debug: bool = False) -> None:
         self._config = config
+        if debug:
+            import imaplib
+            imaplib.Debug = 100
+            # __debug__ is a global
         self._client = imapclient.IMAPClient(config.server, use_uid=True)
         _ = self._client.login(config.user, config.password)
         # _ == b'Logged in'
@@ -203,13 +284,23 @@ class ImapClient:
 
     ##############################################
 
+    @property
+    def welcome(self) -> str:
+        return self._client.welcome.decode('ascii')
+
+    ##############################################
+
     def _get_capabilities(self) -> list[str]:
         self._capabilities = [_.decode('ASCII') for _ in self._client.capabilities()]
+        # self._has_status_size = self.has_capability('STATUS=SIZE')
         self._has_status_size = 'STATUS=SIZE' in self._capabilities
 
     @property
     def capabilities(self) -> list[str]:
         return self._capabilities
+
+    def has_capability(self, capability: str) -> bool:
+        return self._client.has_capability(capability)
 
     ##############################################
 

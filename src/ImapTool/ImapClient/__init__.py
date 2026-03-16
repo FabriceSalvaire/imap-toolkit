@@ -7,6 +7,7 @@
 ####################################################################################################
 
 __all__ = [
+    'add_logging_to_imaplib',
     'Email',
     'Folder',
     'ImapClient',
@@ -14,6 +15,6 @@ __all__ = [
     'ImapExtensionError',
 ]
 
-from .client import Folder, ImapClient, ImapExtensionError
+from .client import Folder, ImapClient, ImapExtensionError, add_logging_to_imaplib
 from .config import ImapClientConfig
 from .email import Email

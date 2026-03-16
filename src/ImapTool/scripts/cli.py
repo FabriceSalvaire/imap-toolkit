@@ -32,7 +32,7 @@ def main():
     parser.add_argument(
         '--server',
     )
-    # parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
 
     # if args.debug:

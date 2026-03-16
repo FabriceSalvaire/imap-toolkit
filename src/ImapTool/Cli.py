@@ -29,7 +29,7 @@ from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
 
 from ImapTool.folder_helpers import CallbackData, folder_callback
-from ImapTool.ImapClient import ImapClient, ImapClientConfig
+from ImapTool.ImapClient import ImapClient, ImapClientConfig, add_logging_to_imaplib
 from ImapTool.printer import byte_humanize, init_console
 
 ####################################################################################################
@@ -198,6 +198,18 @@ class CustomCompleter(Completer):
 
 class Cli:
 
+    ##############################################
+
+    @staticmethod
+    def _to_bool(value: str) -> bool:
+        if isinstance(value, bool):
+            return value
+        match str(value).lower():
+            case 'true' | 't':
+                return True
+            case _:
+                return False
+
     ############################################################################
 
     def __init__(self, args: argparse.Namespace) -> None:
@@ -212,6 +224,8 @@ class Cli:
         # self._completer = WordCompleter(self.COMMANDS)
         self._completer = CustomCompleter(self, self.COMMANDS)
 
+        if args.debug:
+            self.debug(True)
         self._client: ImapClient | None = None
         if args.server:
             self.login(args.server)
@@ -341,14 +355,23 @@ class Cli:
         # config = yaml.load(config_path.read_text(), Loader=yaml.SafeLoader)
         # self.print(config)
         imap_config = ImapClientConfig.from_yaml(config_path, server)
-        self._client = ImapClient(imap_config)
+        self._client = ImapClient(imap_config, debug=False)
         self.print(f"Logged to [green]{imap_config.server}")
+        self.print(f"  {self._client.welcome}")
 
     def _check_logged(self) -> bool:
         if self._client is None:
             self.print("[red]Not logged")
             return False
         return True
+
+    ##############################################
+
+    def debug(self, value: bool) -> None:
+        value = self._to_bool(value)
+        if value:
+            self.print("[warning]Enable debugging")
+            add_logging_to_imaplib(self._console)
 
     ##############################################
 
