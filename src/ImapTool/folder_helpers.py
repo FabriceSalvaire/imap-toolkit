@@ -11,6 +11,7 @@ __all__ = ['CallbackData', 'folder_callback']
 ####################################################################################################
 
 from dataclasses import dataclass
+import imaplib
 
 from rich.console import Console
 
@@ -34,9 +35,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
     line = f'{indent}"{folder.name}"'
     line = f'{line:<40}'
     callback_data.number_of_folders += 1
-    number_of_mails = folder.number_of_mails
-    callback_data.number_of_mails += number_of_mails
     try:
+        number_of_mails = folder.number_of_mails   # select can raise
+        callback_data.number_of_mails += number_of_mails
         size = folder.size
         percent = 100 * size / callback_data.size
         if percent < 1:
@@ -49,7 +50,9 @@ def folder_callback(folder: Folder, callback_data, level: int) -> None:
         _ = byte_humanize(size)
         console.print(f'{line} {number_of_mails:>8_} {_:>10} {percent_str} %')
     except ImapExtensionError:
-        console.print(f'{line} {number_of_mails:>8_} ??? ??? %')
+        console.print(f'[warning]{line} {number_of_mails:>8_} ??? ??? %')
+    except imaplib.IMAP4.error:
+        console.print(f'[warning]{line} ??? ??? ??? %')
     if callback_data.show_full_name:
         indent = ''
         console.print(f'{indent}[blue]"{folder.full_name}"')

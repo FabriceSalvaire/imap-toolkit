@@ -40,19 +40,19 @@ class ImapExtensionError(NameError):
 ####################################################################################################
 
 def add_logging_to_imaplib(console: Console) -> None:
-    import imaplib
+    """Add logging to the original read/send imaplib methods"""
 
-    cls = imaplib.IMAP4
-    py_read = cls.read
-    py_readline = cls.readline
-    py_send = cls.send
+    import imaplib
 
     COMMANDS = list(imaplib.Commands.keys())
     RESPONSES = ('OK', 'NO', 'BAD', 'PREAUTH', 'BYE')
+    INDENT = ' '*4
 
+    # Stack to store the command ids
     COMMAND_IDS: list[str] = []
 
     def split(text: str) -> tuple[int, int]:
+        """Find the two first spaces"""
         s1 = text.find(' ')
         if s1 == -1:
             raise ValueError
@@ -62,15 +62,17 @@ def add_logging_to_imaplib(console: Console) -> None:
         return s1, s2
 
     def log(func: str, data: bytes) -> bytes:
+        # This function try to highlight the IMAP protocol without the need to rewrite imaplib
+        # Fixme: to be further checked
         try:
             text = data.decode('ASCII')
             if text != '\r\n':
                 if func.startswith('send'):
                     s1, s2 = split(text)
                     command_id = text[:s1]
-                    COMMAND_IDS.append(command_id)
                     command = text[s1+1:s2]
                     args = text[s2+1:]
+                    COMMAND_IDS.append(command_id)
                     if command not in COMMANDS:
                         raise ValueError
                     text = f'[imap_cmd_id]{command_id}[/] [imap_cmd]{command}[/] [imap_args]{args}[/]'
@@ -83,26 +85,35 @@ def add_logging_to_imaplib(console: Console) -> None:
                         COMMAND_IDS.remove(p1)
                         text = f'[imap_cmd_id]{p1}[/] [imap_ok]{p2}[/] [imap_args]{p3}[/]'
                     elif p1 in '*-' and p2 in RESPONSES:
-                        text = f'[imap_star]{p1}[/] [imap_ok]{p2}[/] [imap_args]{p3}[/]'
+                        text = f'{INDENT}[imap_star]{p1}[/] [imap_ok]{p2}[/] [imap_args]{p3}[/]'
                     elif p1 in '*-':
-                        text = f'[imap_star]{p1}[/] [imap_args]{p2} {p3}[/]'
+                        text = f'{INDENT}[imap_star]{p1}[/] [imap_args]{p2} {p3}[/]'
             text = text.replace('\r\n', ' [imap_rn]\\r\\n[/]')
-            console.print(f'[debug]DEBUG:[/] [func]IMAP4.{func:8}[/] {text}')
+            console.print(f'[debug]DEBUG:[/] [func]IMAP4.{func}[/] {text}')
         except Exception as e:
             console.print(f'{func} {data}')
             # console.print(e)
             raise e
         return data
 
+    # Save the original methods
+    cls = imaplib.IMAP4
+    py_read = cls.read
+    py_readline = cls.readline
+    py_send = cls.send
+
+    # Define the read/save methods with logging
+
     def read(self, size):
         return log('read', py_read(self, size))
 
     def readline(self):
-        return log('readline', py_readline(self))
+        return log('read', py_readline(self))
 
     def send(self, data):
         py_send(self, log('send', data))
 
+    # replace the read/send methods
     cls.read = read
     cls.readline = readline
     cls.send = send
@@ -297,7 +308,7 @@ class ImapClient:
 
     @property
     def capabilities(self) -> list[str]:
-        return self._capabilities
+        return sorted(self._capabilities)
 
     def has_capability(self, capability: str) -> bool:
         return self._client.has_capability(capability)
